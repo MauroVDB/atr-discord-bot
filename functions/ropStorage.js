@@ -1,51 +1,37 @@
 const Database = require('better-sqlite3');
-const db = new Database('./database/ropVotes.db');
+const path = require('path');
+
+const dbPath = path.join(__dirname, '/ropVotes.db');
+const db = new Database(dbPath);
 
 db.prepare(`
-CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    channelId TEXT,
-    messageId TEXT,
-    type TEXT,
-    roles TEXT,
-    users TEXT
+CREATE TABLE IF NOT EXISTS votes (
+    messageId TEXT PRIMARY KEY,
+    data TEXT
 )
 `).run();
 
 function loadRopVotes() {
-    const rows = db.prepare('SELECT * FROM messages').all();
-    const data = { messages: {} };
+    const rows = db.prepare('SELECT * FROM votes').all();
+    const result = {};
     for (const row of rows) {
-        data.messages[row.id] = {
-            channelId: row.channelId,
-            messageId: row.messageId,
-            type: row.type,
-            roles: JSON.parse(row.roles),
-            users: JSON.parse(row.users)
-        };
+        result[row.messageId] = JSON.parse(row.data);
     }
-    return data;
+    return result;
 }
 
 function saveRopVotes(data) {
     const stmt = db.prepare(`
-        INSERT INTO messages (id, channelId, messageId, type, roles, users)
-        VALUES (@id, @channelId, @messageId, @type, @roles, @users)
-        ON CONFLICT(id) DO UPDATE SET
-            channelId = excluded.channelId,
-            messageId = excluded.messageId,
-            type = excluded.type,
-            roles = excluded.roles,
-            users = excluded.users
+        INSERT INTO votes (messageId, data)
+        VALUES (@messageId, @data)
+        ON CONFLICT(messageId) DO UPDATE SET
+            data = excluded.data
     `);
-    for (const id in data.messages) {
+
+    for (const messageId in data) {
         stmt.run({
-            id,
-            channelId: data.messages[id].channelId,
-            messageId: data.messages[id].messageId,
-            type: data.messages[id].type,
-            roles: JSON.stringify(data.messages[id].roles),
-            users: JSON.stringify(data.messages[id].users)
+            messageId,
+            data: JSON.stringify(data[messageId])
         });
     }
 }

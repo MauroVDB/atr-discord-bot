@@ -1,6 +1,11 @@
 const Database = require('better-sqlite3');
-const db = new Database('./database/reactionRoles.db');
+const path = require('path');
 
+// Zorg dat database map altijd bestaat
+const dbPath = path.join(__dirname, 'reactionRoles.db');
+const db = new Database(dbPath);
+
+// Maak tabel aan als deze nog niet bestaat
 db.prepare(`
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -38,6 +43,7 @@ function saveRoles(data) {
             roles = excluded.roles,
             users = excluded.users
     `);
+
   for (const id in data.messages) {
     stmt.run({
       id,

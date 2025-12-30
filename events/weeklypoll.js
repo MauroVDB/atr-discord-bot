@@ -30,7 +30,7 @@ module.exports = {
     //0 12 * * 1 → 12:00 uur elke maandag
     //Syntax: minute hour day-of-month month day-of-week
     console.log('Weekly poll scheduler initialized.');
-    cron.schedule('19 18 * * 1', async () => {
+    cron.schedule('0 12 * * 0', async () => {
       const channel = await client.channels.fetch(channelId);
       if (!channel) return console.error('Channel not found for weekly poll.');
       voteTrackerPoll.clear();
@@ -68,7 +68,11 @@ module.exports = {
       })
 
       console.log('Weekly poll sent.');
+
+    }, {
+      timezone: 'Europe/Brussels'
     });
+
   },
   voteTrackerPoll,
   options,

@@ -1,51 +1,37 @@
 const Database = require('better-sqlite3');
-const db = new Database('./database/weeklyPollData.db');
+const path = require('path');
+
+const dbPath = path.join(__dirname, 'weeklyPollData.db');
+const db = new Database(dbPath);
 
 db.prepare(`
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE IF NOT EXISTS polls (
     id TEXT PRIMARY KEY,
-    channelId TEXT,
-    messageId TEXT,
-    type TEXT,
-    roles TEXT,
-    users TEXT
+    data TEXT
 )
 `).run();
 
 function loadPollData() {
-  const rows = db.prepare('SELECT * FROM messages').all();
-  const data = { messages: {} };
+  const rows = db.prepare('SELECT * FROM polls').all();
+  const result = {};
   for (const row of rows) {
-    data.messages[row.id] = {
-      channelId: row.channelId,
-      messageId: row.messageId,
-      type: row.type,
-      roles: JSON.parse(row.roles),
-      users: JSON.parse(row.users)
-    };
+    result[row.id] = JSON.parse(row.data);
   }
-  return data;
+  return result;
 }
 
 function savePollData(data) {
   const stmt = db.prepare(`
-        INSERT INTO messages (id, channelId, messageId, type, roles, users)
-        VALUES (@id, @channelId, @messageId, @type, @roles, @users)
+        INSERT INTO polls (id, data)
+        VALUES (@id, @data)
         ON CONFLICT(id) DO UPDATE SET
-            channelId = excluded.channelId,
-            messageId = excluded.messageId,
-            type = excluded.type,
-            roles = excluded.roles,
-            users = excluded.users
+            data = excluded.data
     `);
-  for (const id in data.messages) {
+
+  for (const id in data) {
     stmt.run({
       id,
-      channelId: data.messages[id].channelId,
-      messageId: data.messages[id].messageId,
-      type: data.messages[id].type,
-      roles: JSON.stringify(data.messages[id].roles),
-      users: JSON.stringify(data.messages[id].users)
+      data: JSON.stringify(data[id])
     });
   }
 }
