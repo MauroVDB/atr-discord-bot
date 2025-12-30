@@ -44,12 +44,24 @@ module.exports = {
         // Verstuur opnieuw via reactionroles.js
         await reactionRole.send(interaction.client, {
             id: configId,
-            type: entry.type,
-            channelId: entry.channelId,
+            type: 'button',
+            channelId: process.env.REACTION_ROLES_CHANNEL_ID,
+            emoji: '📢',
             title: 'Active This War',
-            roles: [{ label: 'Active this war', roleId: roleId, emoji: '🛡️' }]
+            footer: 'Role will reset after every war.',
+            description: 'Equip this role if you will be active this war!',
+            roles: [
+                {
+                    label: 'Active this war',
+                    roleId: roleId,
+                    emoji: process.env.ACTIVE_EMOJI
+                }
+            ]
         }, true);
 
-        return interaction.reply({ content: '✅ Active This War role has been reset and the button message resent.', ephemeral: true });
+        return interaction.reply({
+            content: '✅ Active This War role has been reset.',
+            ephemeral: true
+        });
     }
 };
