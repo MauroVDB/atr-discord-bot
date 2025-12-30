@@ -29,6 +29,19 @@ for (const messageId in storedVotes) {
 const verifiedMessages = new Map();
 const allyMessages = new Map();
 
+function interestBar(upvotes, downvotes, steps = 15) {
+  const total = upvotes + downvotes;
+
+  if (total === 0) {
+    return "░".repeat(steps) + " 0%";
+  }
+
+  const percent = Math.round((upvotes / total) * 100);
+  const filled = Math.round((percent / 100) * steps);
+
+  return "█".repeat(filled) + "░".repeat(steps - filled) + ` ${percent}%`;
+}
+
 function getField(embed, name) {
   return embed.data.fields?.find(f => f.name === name);
 }
@@ -71,9 +84,9 @@ module.exports = {
       // Alleen reageren op ons bericht
       if (interaction.message.id !== entry.messageId) return;
 
-      
+
       const member = await interaction.guild.members.fetch(interaction.user.id);
-      
+
       //Code voor de dropdowns
       if (entry.type === 'dropdown' && interaction.isStringSelectMenu()) {
         const selectedRoles = interaction.values; // array van roleIds
@@ -114,7 +127,7 @@ module.exports = {
         entry.users[interaction.user.id] = current;
 
         saveRoles(data);
-        await interaction.reply({ content: 'Active this war updated', ephemeral: true});
+        await interaction.reply({ content: 'Active this war updated', ephemeral: true });
         return;
       }
     }
@@ -228,6 +241,7 @@ module.exports = {
 
         if (!voteTracker.has(message.id)) voteTracker.set(message.id, new Map());
         const userVotes = voteTracker.get(message.id);
+        const embed = message.embeds[0];
 
         const previousVote = userVotes.get(userId);
         const newVote = interaction.customId === 'rop_upvote' ? 'upvote' : 'downvote';
@@ -243,6 +257,29 @@ module.exports = {
           if (vote === 'downvote') downvotes++;
         }
 
+        // ---- INTERESSE FIELD FIX ----
+        const newFields = [...embed.fields];
+
+        const interestFieldIndex = newFields.findIndex(
+          f => f.name === "📊 Interested"
+        );
+
+        const interestField = {
+          name: "📊 Interested",
+          value: interestBar(upvotes, downvotes),
+          inline: false
+        };
+
+        if (interestFieldIndex !== -1) {
+          newFields[interestFieldIndex] = interestField;
+        } else {
+          newFields.push(interestField);
+        }
+
+        const updatedEmbed = new EmbedBuilder(embed)
+          .setFields(newFields);
+
+        // Buttons
         const upvoteButton = new ButtonBuilder()
           .setCustomId('rop_upvote')
           .setStyle(ButtonStyle.Success)
@@ -256,10 +293,14 @@ module.exports = {
           .setLabel(`Downvotes: ${downvotes}`);
 
         const row = new ActionRowBuilder().addComponents(upvoteButton, downvoteButton);
-        await message.edit({ components: [row] });
+
+        await message.edit({
+          embeds: [updatedEmbed],
+          components: [row]
+        });
+
         return;
       }
-
       /* ===================== TICKETS ===================== */
 
       // -------- Create Ticket -------- //
@@ -338,7 +379,7 @@ module.exports = {
         const allyMessage = await interaction.reply({ content: `${user} has been added as an ally!`, components: [row], ephemeral: false });
         allyMessages.set(interaction.channel.id, allyMessage);
         if (VerifiedCategory) {
-          await interaction.channel.setParent(VerifiedCategory).catch(() => console.warn('Rate limit category set.'));
+          await interaction.channel.setParent(VerifiedCategory, { lockPermissions: false }).catch(() => console.warn('Rate limit category set.'));
         }
         return;
       } else {
@@ -361,7 +402,7 @@ module.exports = {
         if (interaction.customId === 'verify_ticket') {
           await user.roles.add(ATR_ROLE).catch(() => { });
           await user.roles.add(PRIVATE_ROLE).catch(() => { });
-          user.send('You have been **successfully verified** into the ATR Regiment! Welcome o7.').catch(() => { });
+          user.send(`You have been **successfully verified** into the ATR Regiment! Welcome o7.\n\nOne of our officers will try to invite you asap into the in-game squad + regiment.\n\nPlease check back in ${interaction.channel} when this is possible.`).catch(() => { });
           const closeBtn = new ButtonBuilder().setCustomId('close_ticket').setLabel('| Close ticket').setEmoji('🔒').setStyle(ButtonStyle.Primary);
           const deleteBtn = new ButtonBuilder().setCustomId('delete_ticket').setLabel('| Delete ticket').setEmoji('🗑️').setStyle(ButtonStyle.Danger);
           const row = new ActionRowBuilder().addComponents(closeBtn, deleteBtn);
@@ -369,8 +410,9 @@ module.exports = {
           const verifiedMessage = await interaction.reply({ content: `${user} has been verified!`, components: [row], ephemeral: false });
           verifiedMessages.set(interaction.channel.id, verifiedMessage);
           if (VerifiedCategory) {
-            await interaction.channel.setParent(VerifiedCategory).catch(() => console.warn('Rate limit category set.'));
-          }
+            await interaction.channel.setParent(VerifiedCategory, { lockPermissions: false }).catch(() => console.warn('Rate limit category set.'));
+          };
+
           return;
         } else if (interaction.customId === 'deny_ticket') {
           const redenInput = new TextInputBuilder().setCustomId('reden_input').setLabel("Reason for denial (optional)").setStyle(TextInputStyle.Short).setRequired(false);
@@ -390,8 +432,8 @@ module.exports = {
       const ClosedCategory = process.env.CLOSED_CATEGORY_ID;
       await interaction.deferUpdate();
       await interaction.channel.permissionOverwrites.delete(userId);
-      if(!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
-      
+      if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
+
       const reopenBtn = new ButtonBuilder().setCustomId('reopen_ticket').setLabel('| Reopen ticket').setEmoji('🔁').setStyle(ButtonStyle.Success);
       const deleteBtn = new ButtonBuilder().setCustomId('delete_ticket').setLabel('| Delete ticket').setEmoji('🗑️').setStyle(ButtonStyle.Danger);
       const tempRow = new ActionRowBuilder().addComponents(reopenBtn, deleteBtn);
@@ -413,7 +455,7 @@ module.exports = {
 
       interaction.channel.setName(`closed-${interaction.channel.name.split('-')[1]}`).catch(() => console.warn('Rate limit rename.'));
       if (ClosedCategory) {
-        await interaction.channel.setParent(ClosedCategory).catch(() => console.warn('Rate limit category set.'));
+        await interaction.channel.setParent(ClosedCategory, { lockPermissions: false }).catch(() => console.warn('Rate limit category set.'));
       }
       return;
     }
@@ -450,6 +492,7 @@ module.exports = {
     // -------- Delete Ticket -------- //
     if (interaction.customId === 'delete_ticket' && isStaff) {
       try {
+        if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
         await interaction.deferUpdate();
         await interaction.channel.send('🗑️ This ticket will be deleted in 5 seconds...');
         setTimeout(() => interaction.channel.delete(), 5000);

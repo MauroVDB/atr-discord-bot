@@ -1,5 +1,17 @@
 const { SlashCommandBuilder, StringSelectMenuBuilder, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
+function interestBar(upvotes, downvotes, steps = 15) {
+    const total = upvotes + downvotes;
+
+    if (total === 0) {
+        return "░".repeat(steps) + " 0%";
+    }
+
+    const percent = Math.round((upvotes / total) * 100);
+    const filled = Math.round((percent / 100) * steps);
+
+    return "█".repeat(filled) + "░".repeat(steps - filled) + ` ${percent}%`;
+}
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('rop')
@@ -10,12 +22,12 @@ module.exports = {
                 .setDescription('The operation you want to request')
                 .setRequired(true)
                 .addChoices(
-                    { name: 'Partisan Operation', value: 'Partisaning' },
-                    { name: 'Tank Operation', value: 'Tanking' },
-                    { name: 'Arty Operation', value: 'Artillery' },
-                    { name: 'Airborne Operation', value: 'Airborn' },
-                    { name: 'Naval Operation', value: 'Naval' },
-                    { name: 'Other Operation', value: 'Other' },
+                    { name: 'Partisan Operation', value: '<:Partisan:1455329393282126006> Partisaning' },
+                    { name: 'Tank Operation', value: '<:Tank:1455328445629464668> Tanking' },
+                    { name: 'Arty Operation', value: '<:150mm:1455329299287773235> Artillery' },
+                    { name: 'Airborne Operation', value: '✈️ Airborn' },
+                    { name: 'Naval Operation', value: '<:Destroyer:1455328683660415006> Naval' },
+                    { name: 'Other Operation', value: '❓ Other' },
                 ))
         .addStringOption(option =>
             option
@@ -36,6 +48,8 @@ module.exports = {
         const custom = interaction.options.getString('other_operation');
         const time = interaction.options.getString('time_of_the_operation');
         const notes = interaction.options.getString('additional_notes');
+        
+
 
         const upvote = new ButtonBuilder()
             .setCustomId('rop_upvote')
@@ -47,26 +61,27 @@ module.exports = {
             .setStyle(ButtonStyle.Danger);
         const voteRow = new ActionRowBuilder().addComponents(upvote, downvote);
 
+        let upvotes = 0, downvotes = 0;
         const embed = new EmbedBuilder()
             .setColor('#DBB434')
+            .setTitle(`${choose} Operation Request`)
             .addFields(
-                { name: `Operation request:`, value: choose, inline: false },
-                { name: 'Requested by:', value: `<@${interaction.user.id}>`, inline: false },
-                { name: 'Time of Operation:', value: time || 'Not specified', inline: false },
-                { name: 'Additional Notes:', value: notes || 'None', inline: false },
-                // { name: 'Upvotes', value: '0', inline: true },
-                // { name: 'Downvotes', value: '0', inline: true },
+                { name: '👤 Requested by:', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '🕒 Time of Operation:', value: time || 'Not specified', inline: true },
+                { name: '📝 Additional Notes:', value: notes || 'None', inline: false },
+                { name: "📊 Interested", value: interestBar(upvotes, downvotes), inline: false },
+
             );
         const embedOther = new EmbedBuilder()
             .setColor('#DBB434')
+            .setTitle(`${choose} Operation Request`)
             .addFields(
-                { name: `Operation request:`, value: choose, inline: false },
-                { name: 'Requested by:', value: `<@${interaction.user.id}>`, inline: false },
-                { name: 'Details:', value: custom || "", inline: false },
-                { name: 'Time of Operation:', value: time || 'Not specified', inline: false },
-                { name: 'Additional Notes:', value: notes || 'None', inline: false },
-                // { name: 'Upvotes', value: '0', inline: true },
-                // { name: 'Downvotes', value: '0', inline: true },
+                { name: '💬 Details:', value: custom || "", inline: false },
+                { name: '👤 Requested by:', value: `<@${interaction.user.id}>`, inline: true },
+                { name: '🕒 Time of Operation:', value: time || 'Not specified', inline: true },
+                { name: '📝 Additional Notes:', value: notes || 'None', inline: false },
+                { name: "📊 Interested", value: interestBar(upvotes, downvotes), inline: false },
+
             );
         const OPERATIONS_REQUEST_CHANNEL_ID = process.env.OPERATIONS_REQUEST_CHANNEL_ID;
         const channel = await interaction.client.channels.fetch(OPERATIONS_REQUEST_CHANNEL_ID);
@@ -76,7 +91,7 @@ module.exports = {
                 ephemeral: true,
             });
         }
-        if (choose === 'Other') {
+        if (choose === '❓ Other') {
             if (custom) {
                 await channel.send({
                     embeds: [embedOther],
