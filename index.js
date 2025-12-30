@@ -2,6 +2,10 @@ const { Client, Collection, GatewayIntentBits } = require('discord.js');
 require('dotenv').config();
 const fs = require('fs');
 
+if (process.env.BOT_ENABLED !== 'true') {
+  console.log('Bot is uitgeschakeld via Railway ENV');
+  process.exit(0);
+}
 
 const client = new Client({
   intents: [
