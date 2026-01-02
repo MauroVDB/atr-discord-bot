@@ -2,8 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 
 // Zorg dat database map altijd bestaat
-const dbPath = path.join(__dirname, 'reactionRoles.db');
-const db = new Database(dbPath);
+const db = new Database('./data/reactionroles.db');
 
 // Maak tabel aan als deze nog niet bestaat
 db.prepare(`

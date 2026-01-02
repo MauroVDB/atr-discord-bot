@@ -1,8 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-const dbPath = path.join(__dirname, '/ropVotes.db');
-const db = new Database(dbPath);
+const db = new Database('./data/rop.db');
 
 db.prepare(`
 CREATE TABLE IF NOT EXISTS votes (
