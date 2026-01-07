@@ -7,6 +7,9 @@ const statuses = [
   { name: 'Weekly Polls', type: 4 },
   { name: 'ATR Discord', type: 4 },
 ];
+
+const updateEmbed = require("../events/msuppstracker");
+
 module.exports = {
   name: 'ready',
   once: true,
@@ -14,13 +17,12 @@ module.exports = {
     console.log(`✅ Logged in as ${client.user.tag}`);
     weeklypoll.start(client, weeklypollChannelId);
 
-
     reactionRole.send(client, {
       id: 'divisions',
       channelId: REACTION_ROLE_CHANNEL_ID,
       type: 'dropdown',
       title: 'Divisions roles',
-      emoji:':crossed_swords:',
+      emoji: ':crossed_swords:',
       description: 'Select the roles you are interested in in-game!\n\nYou will receive a ping if there is an OP planned for these type of roles or if something is needed for them.',
       roles: [
         { label: 'Tanking', roleId: process.env.ARMOR_ROLE_ID, emoji: process.env.ARMOR__EMOJI },
@@ -48,7 +50,7 @@ module.exports = {
       id: 'activethiswar',
       type: 'button',
       channelId: REACTION_ROLE_CHANNEL_ID,
-      emoji:'📢',
+      emoji: '📢',
       title: 'Active This War',
       footer: 'Role will reset after every war, so you will have to re-equip this role every war.',
       description: 'Equip this role if you will be active this war!',
@@ -66,6 +68,13 @@ module.exports = {
         },
       ],
     });
+
+
+    // updateEmbed(client);
+
+    // setInterval(() => {
+    //   updateEmbed(client);
+    // }, 1 * 60 * 1000); // elke 5 minuten
   },
 }
 

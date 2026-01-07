@@ -17,7 +17,7 @@ module.exports = {
     if (!channel) return;
 
     const embed = new EmbedBuilder()
-      .setTitle('🎫 | Start verification')
+      .setTitle('🎫 | Start Verification')
       .setDescription(
         'Interested in joining us? Click on the button below.\n' +
         'Our support team will help you as soon as possible.'

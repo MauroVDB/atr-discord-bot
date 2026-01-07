@@ -10,10 +10,86 @@ const {
   TextInputBuilder,
   AttachmentBuilder,
 } = require('discord.js');
+
 const { voteTrackerPoll, options } = require('./weeklypoll');
 const { loadRopVotes, saveRopVotes } = require('../functions/ropStorage');
 const { savePollData } = require('../functions/pollStorage');
 const { loadRoles, saveRoles } = require('../functions/roleStorage');
+const servicesJoinFacility = require('../functions/services');
+
+
+const SERVICES = {
+  facility: {
+    table: 'orders',          // database tabel
+    joinTable: 'order_joins', // join tabel precies zoals in SQLite
+    joinPrefix: 'join_order',
+    finishId: 'finish_order',
+    cancelId: 'cancel_order',
+    emoji: process.env.FACILITY__EMOJI,
+    categoryId: process.env.FACILITY_CATEGORY_ID,
+    finishedChannelId: process.env.FACILITY_FINISHED_CHANNEL_ID,
+    publicChannelId: process.env.FACILITY_CHANNEL_ID,
+    prefix: 'fac',
+    role: process.env.FACILITY_ROLE_ID
+  },
+  lendlease: {
+    table: 'lendlease',
+    joinTable: 'lendlease_joins', // join tabel
+    joinPrefix: 'join_lendlease',
+    finishId: 'finish_lendlease',
+    cancelId: 'cancel_lendlease',
+    categoryId: process.env.LEND_LEASE_CATEGORY_ID,
+    emoji: process.env.LOGISTICS__EMOJI,
+    finishedChannelId: process.env.LEND_LEASE_FINISHED_CHANNEL_ID,
+    publicChannelId: process.env.LEND_LEASE_CHANNEL_ID,
+    prefix: 'll',
+    role: process.env.LOGISTICS_ROLE_ID
+  }
+};
+/**
+ * Update the ticket embed with the current joiners.
+ * @param {TextChannel} channel - The Discord channel of the ticket
+ * @param {'facility'|'lendlease'} serviceKey - Which service this ticket belongs to
+ */
+function updateTicketEmbed(channel, serviceKey = 'facility') {
+  const ticketMessage = ticketMessages.get(channel.id);
+  if (!ticketMessage) return;
+
+  const table = serviceKey === 'facility' ? 'order_joins' : 'lendlease_joins';
+
+  const rows = servicesJoinFacility
+    .prepare(`SELECT user_id FROM ${table} WHERE channel_id = ?`)
+    .all(channel.id);
+
+  const joined = rows.length
+    ? rows.map(r => `<@${r.user_id}>`).join('\n')
+    : '*No one joined yet*';
+
+  const embed = EmbedBuilder.from(ticketMessage.embeds[0]);
+
+  embed.setDescription(
+    embed.data.description.replace(
+      /-# Joined[\s\S]*/m,
+      `-# Joined\n${joined}`
+    )
+  );
+
+  ticketMessage.edit({ embeds: [embed] }).catch(() => { });
+}
+
+/**
+ * Get an array of user IDs that joined a ticket.
+ * @param {string} channelId - ID of the ticket channel
+ * @param {'facility'|'lendlease'} serviceKey - Which service
+ * @returns {string[]} - Array of user IDs
+ */
+function getTicketJoiners(channelId, serviceKey = 'facility') {
+  const table = serviceKey === 'facility' ? 'order_joins' : 'lendlease_joins';
+  return servicesJoinFacility
+    .prepare(`SELECT user_id FROM ${table} WHERE channel_id = ?`)
+    .all(channelId)
+    .map(row => row.user_id);
+}
 
 const ticketMessages = new Map();
 const closedMessages = new Map();
@@ -42,10 +118,6 @@ function interestBar(upvotes, downvotes, steps = 15) {
   return "█".repeat(filled) + "░".repeat(steps - filled) + ` ${percent}%`;
 }
 
-function getField(embed, name) {
-  return embed.data.fields?.find(f => f.name === name);
-}
-
 function makeBar(percentage, size = 20) {
   const filled = Math.round((percentage / 100) * size);
   const empty = size - filled;
@@ -72,7 +144,6 @@ module.exports = {
     /* =========================
       REACTION ROLES
     ========================== */
-
     // Controel of het een knop/dropdownmenu is en of het custom id van de interactie start met "rr".
     if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId?.startsWith('rr_')) {
 
@@ -134,7 +205,6 @@ module.exports = {
     /* =========================
       WEEKLY POLL VOTING
     ========================== */
-
     if (interaction.isButton() && interaction.customId.startsWith('weekly_vote_')) {
 
 
@@ -230,6 +300,7 @@ module.exports = {
        BUTTON INTERACTIONS
     ========================== */
     const isStaff = interaction.member.roles.cache.has(STAFF_ROLE_ID);
+    const isATR = interaction.member.roles.cache.has(ATR_ROLE);
 
     if (interaction.isButton()) {
       const message = interaction.message;
@@ -361,6 +432,8 @@ module.exports = {
       }
       // -------- Ally -------- //
       if (interaction.customId === 'ally_ticket' && isStaff) {
+        if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
+
         const userId = interaction.channel.topic;
         const user = await interaction.guild.members.fetch(userId).catch(() => null);
         const VerifiedCategory = process.env.VERIFIED_CATEGORY_ID;
@@ -382,13 +455,10 @@ module.exports = {
           await interaction.channel.setParent(VerifiedCategory, { lockPermissions: false }).catch(() => console.warn('Rate limit category set.'));
         }
         return;
-      } else {
-        if (!isStaff) {
-          return interaction.reply({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
-        }
       }
       // -------- Verify / Deny -------- //
       if ((interaction.customId === 'verify_ticket' || interaction.customId === 'deny_ticket') && isStaff) {
+        if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
 
         const userId = interaction.channel.topic;
         const user = await interaction.guild.members.fetch(userId).catch(() => null);
@@ -420,102 +490,496 @@ module.exports = {
           await interaction.showModal(modal);
         }
         return;
-      } else {
-        if (!isStaff) {
-          return interaction.reply({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
-        }
       }
-    }
-    // -------- Close Ticket -------- //
-    if (interaction.customId === 'close_ticket' && isStaff) {
-      const userId = interaction.channel.topic;
-      const ClosedCategory = process.env.CLOSED_CATEGORY_ID;
-      await interaction.deferUpdate();
-      await interaction.channel.permissionOverwrites.delete(userId);
-      if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
-
-      const reopenBtn = new ButtonBuilder().setCustomId('reopen_ticket').setLabel('| Reopen ticket').setEmoji('🔁').setStyle(ButtonStyle.Success);
-      const deleteBtn = new ButtonBuilder().setCustomId('delete_ticket').setLabel('| Delete ticket').setEmoji('🗑️').setStyle(ButtonStyle.Danger);
-      const tempRow = new ActionRowBuilder().addComponents(reopenBtn, deleteBtn);
-
-      const verifiedMessage = verifiedMessages.get(interaction.channel.id);
-      if (verifiedMessage) {
-        await verifiedMessage.edit({ components: [] });
-        verifiedMessages.delete(interaction.channel.id);
-      }
-      const allyMessage = allyMessages.get(interaction.channel.id);
-      if (allyMessage) {
-        await allyMessage.edit({ components: [] });
-        allyMessages.delete(interaction.channel.id);
-      }
-
-      const embed = new EmbedBuilder().setTitle('🔒 | Ticket Closed').setDescription(`Ticket closed by ${interaction.user}.`);
-      const closeMessage = await interaction.channel.send({ embeds: [embed], components: [tempRow] });
-      closedMessages.set(interaction.channel.id, closeMessage);
-
-      interaction.channel.setName(`closed-${interaction.channel.name.split('-')[1]}`).catch(() => console.warn('Rate limit rename.'));
-      if (ClosedCategory) {
-        await interaction.channel.setParent(ClosedCategory, { lockPermissions: false }).catch(() => console.warn('Rate limit category set.'));
-      }
-      return;
-    }
-
-    // -------- Reopen Ticket -------- //
-    if (interaction.customId === 'reopen_ticket' && isStaff) {
-      await interaction.deferUpdate();
-      const userId = interaction.channel.topic;
-
-      await interaction.channel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true });
-
-      const closeMessage = closedMessages.get(interaction.channel.id);
-      if (closeMessage) {
-        await closeMessage.edit({ components: [] });
-        closedMessages.delete(interaction.channel.id);
-      }
-
-      const originalMessage = ticketMessages.get(interaction.channel.id);
-      if (originalMessage) {
-        const closeBtn = new ButtonBuilder().setCustomId('close_ticket').setLabel('| Close ticket').setEmoji('🔒').setStyle(ButtonStyle.Primary);
-        const verifyBtn = new ButtonBuilder().setCustomId('verify_ticket').setLabel('| Verify player').setEmoji('✅').setStyle(ButtonStyle.Success);
-        const denyBtn = new ButtonBuilder().setCustomId('deny_ticket').setLabel('| Deny player').setEmoji('❌').setStyle(ButtonStyle.Danger);
-        const allyBtn = new ButtonBuilder().setCustomId('ally_ticket').setLabel('| Ally player').setEmoji('🤝').setStyle(ButtonStyle.Secondary);
-
-        const row = new ActionRowBuilder().addComponents(verifyBtn, denyBtn, allyBtn, closeBtn);
-        await originalMessage.edit({ components: [row] });
-      }
-
-      await interaction.channel.send({ embeds: [new EmbedBuilder().setTitle('🔓 | Ticket Reopened').setDescription(`Ticket reopened by ${interaction.user}.`).setColor('#DBB434')] });
-      interaction.channel.setName(`ticket-${interaction.channel.name.split('-')[1]}`).catch(() => console.warn('Rate limit rename.'));
-      return;
-    }
-
-    // -------- Delete Ticket -------- //
-    if (interaction.customId === 'delete_ticket' && isStaff) {
-      try {
-        if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
+      // -------- Close Ticket -------- //
+      if (interaction.customId === 'close_ticket' && isStaff) {
+        const userId = interaction.channel.topic;
+        const ClosedCategory = process.env.CLOSED_CATEGORY_ID;
         await interaction.deferUpdate();
-        await interaction.channel.send('🗑️ This ticket will be deleted in 5 seconds...');
-        setTimeout(() => interaction.channel.delete(), 5000);
-      } catch (error) {
-        console.error(error);
-        return interaction.followUp({ content: '❌ Something went wrong while deleting the ticket.', ephemeral: true });
+        await interaction.channel.permissionOverwrites.delete(userId);
+        if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
+
+        const reopenBtn = new ButtonBuilder().setCustomId('reopen_ticket').setLabel('| Reopen ticket').setEmoji('🔁').setStyle(ButtonStyle.Success);
+        const deleteBtn = new ButtonBuilder().setCustomId('delete_ticket').setLabel('| Delete ticket').setEmoji('🗑️').setStyle(ButtonStyle.Danger);
+        const tempRow = new ActionRowBuilder().addComponents(reopenBtn, deleteBtn);
+
+        const verifiedMessage = verifiedMessages.get(interaction.channel.id);
+        if (verifiedMessage) {
+          await verifiedMessage.edit({ components: [] });
+          verifiedMessages.delete(interaction.channel.id);
+        }
+        const allyMessage = allyMessages.get(interaction.channel.id);
+        if (allyMessage) {
+          await allyMessage.edit({ components: [] });
+          allyMessages.delete(interaction.channel.id);
+        }
+
+        const embed = new EmbedBuilder().setTitle('🔒 | Ticket Closed').setDescription(`Ticket closed by ${interaction.user}.`);
+        const closeMessage = await interaction.channel.send({ embeds: [embed], components: [tempRow] });
+        closedMessages.set(interaction.channel.id, closeMessage);
+
+        interaction.channel.setName(`closed-${interaction.channel.name.split('-')[1]}`).catch(() => console.warn('Rate limit rename.'));
+        if (ClosedCategory) {
+          await interaction.channel.setParent(ClosedCategory, { lockPermissions: false }).catch(() => console.warn('Rate limit category set.'));
+        }
+        return;
       }
-      return;
+
+      // -------- Reopen Ticket -------- //
+      if (interaction.customId === 'reopen_ticket' && isStaff) {
+        await interaction.deferUpdate();
+        const userId = interaction.channel.topic;
+
+        await interaction.channel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true });
+
+        const closeMessage = closedMessages.get(interaction.channel.id);
+        if (closeMessage) {
+          await closeMessage.edit({ components: [] });
+          closedMessages.delete(interaction.channel.id);
+        }
+
+        const originalMessage = ticketMessages.get(interaction.channel.id);
+        if (originalMessage) {
+          const closeBtn = new ButtonBuilder().setCustomId('close_ticket').setLabel('| Close ticket').setEmoji('🔒').setStyle(ButtonStyle.Primary);
+          const verifyBtn = new ButtonBuilder().setCustomId('verify_ticket').setLabel('| Verify player').setEmoji('✅').setStyle(ButtonStyle.Success);
+          const denyBtn = new ButtonBuilder().setCustomId('deny_ticket').setLabel('| Deny player').setEmoji('❌').setStyle(ButtonStyle.Danger);
+          const allyBtn = new ButtonBuilder().setCustomId('ally_ticket').setLabel('| Ally player').setEmoji('🤝').setStyle(ButtonStyle.Secondary);
+
+          const row = new ActionRowBuilder().addComponents(verifyBtn, denyBtn, allyBtn, closeBtn);
+          await originalMessage.edit({ components: [row] });
+        }
+
+        await interaction.channel.send({ embeds: [new EmbedBuilder().setTitle('🔓 | Ticket Reopened').setDescription(`Ticket reopened by ${interaction.user}.`).setColor('#DBB434')] });
+        interaction.channel.setName(`ticket-${interaction.channel.name.split('-')[1]}`).catch(() => console.warn('Rate limit rename.'));
+        return;
+      }
+
+      // -------- Delete Ticket -------- //
+      if (interaction.customId === 'delete_ticket') {
+        try {
+          if (!isStaff) return interaction.followUp({ content: '❌ You do not have permission to perform this action.', ephemeral: true });
+          await interaction.deferUpdate();
+          await interaction.channel.send('🗑️ This ticket will be deleted in 5 seconds...');
+          setTimeout(() => interaction.channel.delete(), 5000);
+        } catch (error) {
+          console.error(error);
+          return interaction.followUp({ content: '❌ Something went wrong while deleting the ticket.', ephemeral: true });
+        }
+        servicesJoinFacility.prepare(`DELETE FROM order_joins WHERE channel_id = ?`)
+          .run(interaction.channel.id);
+      }
+      /* =========================
+             SERVICES
+          ========================== */
+      if (interaction.customId === 'facility_service') {
+        const regimentInput = new TextInputBuilder()
+          .setCustomId('username')
+          .setLabel('Regiment/player name')
+          .setPlaceholder(`f.e: [ATR] or solo player`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const orderDetails = new TextInputBuilder()
+          .setCustomId('order')
+          .setLabel('Amount of vehicles per type')
+          .setPlaceholder(`f.e:
+- 10 Spatha's
+- 5 Kranesca's`)
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const destination = new TextInputBuilder()
+          .setCustomId('destination')
+          .setLabel('Destination')
+          .setPlaceholder(`f.e: Hearthlands - The Blemish`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const modal = new ModalBuilder()
+          .setCustomId('facility_order')
+          .setTitle('Facility Order')
+          .addComponents(
+            new ActionRowBuilder().addComponents(regimentInput),
+            new ActionRowBuilder().addComponents(orderDetails),
+            new ActionRowBuilder().addComponents(destination),
+
+          );
+
+        await interaction.showModal(modal);
+      }
+      if (interaction.customId === 'lend_lease_service') {
+        const regimentInput = new TextInputBuilder()
+          .setCustomId('username')
+          .setLabel('Regiment/player name')
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder(`f.e: [ATR] or solo player`)
+          .setRequired(true);
+
+        const orderDetails = new TextInputBuilder()
+          .setCustomId('order')
+          .setLabel('Amount of crates per type')
+          .setPlaceholder(`f.e:
+- 60 shirts
+- 60 bomastones`)
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true);
+
+        const destination = new TextInputBuilder()
+          .setCustomId('destination')
+          .setLabel('Destination')
+          .setPlaceholder(`f.e: Hearthlands - The Blemish`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const modal = new ModalBuilder()
+          .setCustomId('lend_lease')
+          .setTitle('Lend Lease')
+          .addComponents(
+            new ActionRowBuilder().addComponents(regimentInput),
+            new ActionRowBuilder().addComponents(orderDetails),
+            new ActionRowBuilder().addComponents(destination),
+
+          );
+
+        await interaction.showModal(modal);
+      }
     }
 
 
     /* =========================
-       MODAL SUBMITS
+              MODALS
     ========================== */
-    if (interaction.isModalSubmit() && interaction.customId === 'deny_modal') {
-      const reason = interaction.fields.getTextInputValue('reden_input');
-      const userId = interaction.channel.topic;
-      const user = await interaction.guild.members.fetch(userId).catch(() => null);
-      if (!user || user.roles.cache.has(ATR_ROLE)) return interaction.reply({ content: '❌ Player is either already verified or not found.', ephemeral: true });
 
-      const embed = new EmbedBuilder().setTitle('❌ Verification Denied').setDescription(`Your verification has been denied for the following reason:\n${reason || 'No reason provided.'}`).setColor('#DBB434');
-      await user.send({ content: `Your verification has been denied for reason: **${reason || 'No reason provided'}**.\nContact us in ${interaction.channel}` }).catch(() => { });
-      await interaction.reply({ content: `❌ ${user} has been denied verification: ${reason || 'No reason provided'}`, ephemeral: false });
+
+    if (interaction.isModalSubmit()) {
+
+
+      // =============== Deny Modal =============== //
+
+      if (interaction.customId === 'deny_modal') {
+        const reason = interaction.fields.getTextInputValue('reden_input');
+        const userId = interaction.channel.topic;
+        const user = await interaction.guild.members.fetch(userId).catch(() => null);
+        if (!user || user.roles.cache.has(ATR_ROLE)) return interaction.reply({ content: '❌ Player is either already verified or not found.', ephemeral: true });
+
+        const embed = new EmbedBuilder().setTitle('❌ Verification Denied').setDescription(`Your verification has been denied for the following reason:\n${reason || 'No reason provided.'}`).setColor('#DBB434');
+        await user.send({ content: `Your verification has been denied for reason: **${reason || 'No reason provided'}**.\nContact us in ${interaction.channel}` }).catch(() => { });
+        await interaction.reply({ content: `❌ ${user} has been denied verification: ${reason || 'No reason provided'}`, ephemeral: false });
+
+
+      }
+
+
+      // =============== SERVICES MODALS =============== //
+
+      async function handleOrderModal(interaction, serviceKey) {
+        const cfg = SERVICES[serviceKey];
+        const guild = interaction.guild;
+        const userId = interaction.user.id;
+
+        const orderText = interaction.fields.getTextInputValue('order');
+        const regiment = interaction.fields.getTextInputValue('username');
+        const destination = interaction.fields.getTextInputValue('destination');
+
+        await interaction.deferReply({ ephemeral: true });
+
+        // Check existing order
+        const existing = servicesJoinFacility
+          .prepare(`SELECT * FROM ${cfg.table} WHERE owner_id = ?`)
+          .get(userId);
+
+        if (existing) {
+          const ch = guild.channels.cache.get(existing.channel_id);
+          return interaction.editReply({
+            content: `❌ You already have an order: ${ch ?? 'Channel not found'}`
+          });
+        }
+
+        // Create channel
+        const channel = await guild.channels.create({
+          name: `${cfg.prefix}-${interaction.user.username}`,
+          type: ChannelType.GuildText,
+          parent: cfg.categoryId,
+          permissionOverwrites: [
+            { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+            { id: userId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+            { id: STAFF_ROLE_ID, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] },
+          ],
+        });
+
+        // Insert DB
+        const result = servicesJoinFacility.prepare(`
+    INSERT INTO ${cfg.table} (channel_id, owner_id, regiment_player, order_text, destination)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(channel.id, userId, regiment, orderText, destination);
+
+        const orderId = result.lastInsertRowid;
+
+        // ===== Buttons =====
+        const joinBtn = new ButtonBuilder()
+          .setCustomId(`${cfg.joinPrefix}:${channel.id}`)
+          .setLabel('| Join order')
+          .setEmoji('➕')
+          .setStyle(ButtonStyle.Primary);
+
+        const finishBtn = new ButtonBuilder()
+          .setCustomId(cfg.finishId)
+          .setLabel('| Finish order')
+          .setEmoji('🟢')
+          .setStyle(ButtonStyle.Success);
+
+        const cancelBtn = new ButtonBuilder()
+          .setCustomId(cfg.cancelId)
+          .setLabel('| Cancel order')
+          .setEmoji('🔴')
+          .setStyle(ButtonStyle.Danger);
+
+        const row = new ActionRowBuilder().addComponents(finishBtn, cancelBtn);
+        const rowChat = new ActionRowBuilder().addComponents(joinBtn);
+
+        // ===== Order embed =====
+        const orderEmbed = new EmbedBuilder()
+          .setColor('#DBB434')
+          .setDescription(`
+## <:${cfg.emoji}> | Order **\`#${orderId}\`**
+👤 Created by: <@${userId}> \`${regiment}\`
+──────────────────────
+**Order:**
+${orderText}
+
+**Destination:**
+${destination}
+──────────────────────
+-# Joined
+-# *No one joined yet*
+`);
+
+        // Send in ticket channel
+        const ticketMsg = await channel.send({
+          content: `<@&${cfg.role}> <@${userId}>`,
+          embeds: [orderEmbed],
+          components: [row]
+        });
+
+        ticketMessages.set(channel.id, ticketMsg);
+
+        // Send in public channel
+        const publicChannel = await interaction.client.channels.fetch(cfg.publicChannelId);
+
+        const publicEmbed = new EmbedBuilder()
+          .setColor('#DBB434')
+          .setDescription(`
+## <:${cfg.emoji}> | Order **\`#${orderId}\`**
+👤 Created by: <@${userId}> \`${regiment}\`
+──────────────────────
+**Order:**
+${orderText}
+──────────────────────
+-# Click **Join order** to work on this order!
+`);
+
+        const publicMsg = await publicChannel.send({
+          content: `<@&${cfg.role}>`,
+          embeds: [publicEmbed],
+          components: [rowChat]
+        });
+
+        // Save public message id
+        servicesJoinFacility.prepare(`
+    UPDATE ${cfg.table} SET facility_msg_id = ? WHERE channel_id = ?
+  `).run(publicMsg.id, channel.id);
+
+        return interaction.editReply({
+          content: `✅ Order created: ${channel}`
+        });
+      }
+      if (interaction.customId === 'facility_order') {
+        return handleOrderModal(interaction, 'facility');
+      }
+
+      if (interaction.customId === 'lend_lease') {
+        return handleOrderModal(interaction, 'lendlease');
+      }
+    }
+
+
+    // =============== SERVICES BUTTONS =============== //
+
+    async function handleOrderButton(interaction) {
+      const [action, targetChannelId] = interaction.customId.split(':');
+      let serviceKey;
+
+      if (action.includes('order')) serviceKey = 'facility';
+      if (action.includes('lendlease')) serviceKey = 'lendlease';
+      const cfg = SERVICES[serviceKey];
+      if (!cfg) return;
+
+      const channel = targetChannelId
+        ? interaction.guild.channels.cache.get(targetChannelId)
+        : interaction.channel;
+
+      if (!channel) return interaction.reply({ content: '❌ Order not found.', ephemeral: true });
+
+      const dbEntry = servicesJoinFacility.prepare(`SELECT * FROM ${cfg.table} WHERE channel_id = ?`).get(channel.id);
+      if (!dbEntry && !action.startsWith(cfg.joinPrefix))
+        return interaction.reply({ content: '❌ Order has already been finished.', ephemeral: true });
+
+      // --- JOIN ---
+      if (action === cfg.joinPrefix) {
+        const userId = interaction.user.id;
+        const exists = servicesJoinFacility
+          .prepare(`SELECT 1 FROM ${cfg.joinTable} WHERE channel_id = ? AND user_id = ?`)
+          .get(channel.id, userId);
+
+        if (exists) {
+          servicesJoinFacility.prepare(`DELETE FROM ${cfg.joinTable} WHERE channel_id = ? AND user_id = ?`)
+            .run(channel.id, userId);
+          await channel.permissionOverwrites.delete(userId).catch(() => { });
+
+          updateTicketEmbed(channel, serviceKey);
+
+          return interaction.reply({ content: '🚪 You left the order.', ephemeral: true });
+        }
+
+        servicesJoinFacility.prepare(`INSERT INTO ${cfg.joinTable} (channel_id, user_id) VALUES (?, ?)`)
+          .run(channel.id, userId);
+        await channel.permissionOverwrites.edit(userId, { ViewChannel: true, SendMessages: true });
+
+        updateTicketEmbed(channel, serviceKey);
+
+        return interaction.reply({ content: `✅ You joined the order ${channel}`, ephemeral: true });
+      }
+
+
+      // --- FINISH ---
+      if (action === cfg.finishId) {
+        if (!isATR) return interaction.reply({ content: '❌ No permission.', ephemeral: true });
+
+        const user = await interaction.guild.members.fetch(dbEntry.owner_id).catch(() => null);
+        const joiners = getTicketJoiners(channel.id, serviceKey);
+        const joinMentions = joiners.length ? joiners.map(id => `<@${id}>`).join(' ') : '*No one joined*';
+        const messageLink = `https://discord.com/channels/${interaction.guildId}/${cfg.publicChannelId}/${dbEntry.facility_msg_id}`;
+
+        const embed = new EmbedBuilder()
+          .setColor('#1EFF00')
+          .setDescription(`
+## <:${cfg.emoji}> | Order **\`#${dbEntry.order_id}\`**
+👤 Created by: ${user} \`${dbEntry.regiment_player}\`
+──────────────────────
+🟢 Finished by: ${interaction.user}
+-# 🔗 [Original order](${messageLink})
+
+-# Joined
+${joinMentions}
+`)
+          .setTimestamp();
+
+        const finishedChannel = await client.channels.fetch(cfg.finishedChannelId);
+        await finishedChannel.send({ content: joiners.length ? joinMentions : undefined, embeds: [embed], allowedMentions: { users: joiners } });
+
+        if (dbEntry.facility_msg_id) {
+          const publicChannel = await client.channels.fetch(cfg.publicChannelId);
+          const publicMsg = await publicChannel.messages.fetch(dbEntry.facility_msg_id).catch(() => null);
+          if (publicMsg) await publicMsg.edit({ components: [] }).catch(() => { });
+        }
+
+        user?.send(`Your order from ATR ${serviceKey === 'facility' ? 'Facility Services' : 'Logistics Team'} has been successfully delivered.`).catch(() => { });
+
+        const embedFinished = new EmbedBuilder()
+          .setDescription(`### Order set as finished by ${interaction.user}`)
+
+        const deleteBtn = new ButtonBuilder().setCustomId('delete_ticket').setLabel('| Delete order').setEmoji('🗑️').setStyle(ButtonStyle.Danger);
+        const row = new ActionRowBuilder().addComponents(deleteBtn);
+        await interaction.channel.setName(`${cfg.prefix}-ready-${channel.name.split('-')[1]}`).catch(() => { });
+        await interaction.reply({ embeds: [embedFinished], ephemeral: false });
+        await interaction.message.edit({ components: [row] }).catch(() => { });
+
+        servicesJoinFacility.prepare(`DELETE FROM ${cfg.table} WHERE owner_id = ?`).run(dbEntry.owner_id);
+        return;
+      }
+
+      // --- CANCEL ---
+      if (action === cfg.cancelId) {
+        const modal = new ModalBuilder()
+          .setCustomId(`cancel_modal:${channel.id}:${serviceKey}`)
+          .setTitle('Cancel Order - Reason');
+
+        const reasonInput = new TextInputBuilder()
+          .setCustomId('cancel_reason')
+          .setLabel('Reason for cancelling this order')
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder('Provide a reason why this order is cancelled...')
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+
+        await interaction.showModal(modal);
+        return;
+
+      }
+    }
+    if (interaction.isButton()) {
+      return handleOrderButton(interaction);
+    }
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('cancel_modal')) {
+      const [_, channelId, serviceKey] = interaction.customId.split(':');
+      const channel = interaction.guild.channels.cache.get(channelId);
+      if (!channel) return interaction.reply({ content: '❌ Channel not found', ephemeral: true });
+
+      const cfg = SERVICES[serviceKey];
+      if (!cfg) return interaction.reply({ content: '❌ Invalid service', ephemeral: true });
+
+      const dbEntry = servicesJoinFacility.prepare(`SELECT * FROM ${cfg.table} WHERE channel_id = ?`).get(channel.id);
+      if (!dbEntry) return interaction.reply({ content: '❌ Order already finished or deleted', ephemeral: true });
+
+      const reason = interaction.fields.getTextInputValue('cancel_reason');
+
+      const deleteBtn = new ButtonBuilder()
+        .setCustomId('delete_ticket')
+        .setLabel('| Delete order')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Danger);
+      await interaction.message.edit({ components: [new ActionRowBuilder().addComponents(deleteBtn)] }).catch(() => { });
+
+      await channel.setName(`${cfg.prefix}-cancel-${channel.name.split('-')[1]}`).catch(() => { });
+
+      // Bericht naar Finished/Cancelled channel
+      const joiners = getTicketJoiners(channel.id, serviceKey);
+      const joinMentions = joiners.length ? joiners.map(id => `<@${id}>`).join(' ') : '*No one joined*';
+      const finishedChannel = await client.channels.fetch(cfg.finishedChannelId);
+      const messageLink = `https://discord.com/channels/${interaction.guildId}/${cfg.publicChannelId}/${dbEntry.facility_msg_id}`;
+      const owner = await interaction.guild.members.fetch(dbEntry.owner_id).catch(() => null);
+
+      const embed = new EmbedBuilder()
+        .setColor('#FF0000')
+        .setDescription(`
+## <:${cfg.emoji}> | Order **\`#${dbEntry.order_id}\`**
+👤 Created by: ${owner} \`${dbEntry.regiment_player}\`
+──────────────────────
+🔴 Canceled by: ${interaction.user}
+❔ Reason: ${reason}
+
+-# 🔗 [Original order](${messageLink})
+`)
+        .setTimestamp();
+
+      await finishedChannel.send({ content: joiners.length ? joinMentions : undefined, embeds: [embed], allowedMentions: { users: joiners } });
+      if (dbEntry.facility_msg_id) {
+        const publicChannel = await client.channels.fetch(cfg.publicChannelId);
+        const publicMsg = await publicChannel.messages.fetch(dbEntry.facility_msg_id).catch(() => null);
+        if (publicMsg) await publicMsg.edit({ components: [] }).catch(() => { });
+      }
+      // DM naar eigenaar
+      owner?.send(`Your order from ATR ${serviceKey === 'facility' ? 'Facility Services' : 'Logistics Team'} has been canceled.\n**Reason:** ${reason}`).catch(() => { });
+
+      // DB cleanup
+      servicesJoinFacility.prepare(`DELETE FROM ${cfg.table} WHERE owner_id = ?`).run(dbEntry.owner_id);
+
+      const embedCanceled = new EmbedBuilder()
+        .setDescription(`### Order canceled by ${interaction.user} \nReason: ${reason}`)
+
+      await interaction.reply({ embeds: [embedCanceled], ephemeral: false });
+      return;
     }
   }
 };

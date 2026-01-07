@@ -20,8 +20,6 @@ const popQuestions = [
     { vraag: 'How is the upgraded argonaut called?', antwoord: ['Odyssey', 'UV-5c Odyssey'] },
 
 
-
-
 ];
 
 let currentQuiz = null;

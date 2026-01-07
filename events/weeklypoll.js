@@ -26,10 +26,7 @@ function makeBar(percentage, size = 20) {
 }
 module.exports = {
   start: async (client, channelId) => {
-    // Stel de cron-job in: elke maandag om 12:00
-    //0 12 * * 1 → 12:00 uur elke maandag
     //Syntax: minute hour day-of-month month day-of-week
-    console.log('Weekly poll scheduler initialized.');
     cron.schedule('0 12 * * 0', async () => {
       const channel = await client.channels.fetch(channelId);
       if (!channel) return console.error('Channel not found for weekly poll.');
